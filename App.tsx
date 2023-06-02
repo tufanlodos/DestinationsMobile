@@ -1,6 +1,8 @@
 import React from 'react';
 import {
+  Alert,
   Button,
+  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -28,6 +30,27 @@ function App(): JSX.Element {
   const [destinations, setDestinations] = React.useState<Destination[]>([]);
   const [showAddDestination, setShowAddDestination] = React.useState(false);
 
+  const onAddDestination = (dest: Omit<Destination, 'id'>) => {
+    let list = [];
+    if (destinations.length === 0) {
+      list = [{id: '1', ...dest}];
+    } else {
+      const lastDestinationId = destinations[destinations.length - 1].id;
+      list = [
+        ...destinations,
+        {id: (Number(lastDestinationId) + 1).toString(), ...dest},
+      ];
+    }
+
+    setDestinations(list);
+    setShowAddDestination(false);
+  };
+
+  const onRemoveDestination = (id: string) => {
+    const newDestinations = destinations.filter(dest => dest.id !== id);
+    setDestinations([...newDestinations]);
+  };
+
   return (
     <SafeAreaView style={styles.f1}>
       <StatusBar
@@ -36,22 +59,7 @@ function App(): JSX.Element {
       />
       {showAddDestination ? (
         <AddDestinationView
-          onFinish={dest => {
-            let list = [];
-            if (destinations.length === 0) {
-              list = [{id: '1', ...dest}];
-            } else {
-              const lastDestinationId =
-                destinations[destinations.length - 1].id;
-              list = [
-                ...destinations,
-                {id: (Number(lastDestinationId) + 1).toString(), ...dest},
-              ];
-            }
-
-            setDestinations(list);
-            setShowAddDestination(false);
-          }}
+          onFinish={onAddDestination}
           onCancel={() => setShowAddDestination(false)}
         />
       ) : (
@@ -72,12 +80,7 @@ function App(): JSX.Element {
                 <DestinationRow
                   key={destination.id}
                   destination={destination}
-                  onRemove={() => {
-                    const newDestinations = destinations.filter(
-                      dest => dest.id !== destination.id,
-                    );
-                    setDestinations([...newDestinations]);
-                  }}
+                  onRemove={onRemoveDestination}
                 />
               ))
             )}
@@ -96,8 +99,7 @@ function App(): JSX.Element {
     </SafeAreaView>
   );
 }
-const latRegex = /^-?([1-8]?[1-9]|[1-9]0)\.{1}\d{1,15}/g;
-const longRegex = /^-?(([-+]?)([\d]{1,3})((\.)(\d+))?)/g;
+const LAT_LON_REGEX = /^[-+]?([1-8]?\d(\.\d+)?|90(\.0+)?)$/;
 
 type AddDestinationViewProps = {
   onFinish: (destination: Omit<Destination, 'id'>) => void;
@@ -111,6 +113,35 @@ const AddDestinationView = ({onFinish, onCancel}: AddDestinationViewProps) => {
     longitude: '',
   });
   const [errorMessage, setErrorMessage] = React.useState('');
+
+  const onSave = () => {
+    if (form.name === '') {
+      setErrorMessage('Name is required');
+      return;
+    }
+
+    if (form.latitude === '') {
+      setErrorMessage('Latitude is required');
+      return;
+    }
+
+    if (form.longitude === '') {
+      setErrorMessage('Longitude is required');
+      return;
+    }
+
+    if (!LAT_LON_REGEX.test(form.latitude)) {
+      setErrorMessage('Latitude is not valid');
+      return;
+    }
+
+    if (!LAT_LON_REGEX.test(form.longitude)) {
+      setErrorMessage('Longitude is not valid');
+      return;
+    }
+
+    onFinish(form);
+  };
 
   return (
     <View style={styles.f1}>
@@ -149,59 +180,81 @@ const AddDestinationView = ({onFinish, onCancel}: AddDestinationViewProps) => {
       </View>
       <View style={styles.buttonContainer}>
         <Button color="red" title="Cancel" onPress={onCancel} />
-        <Button
-          color="black"
-          title="Save"
-          onPress={() => {
-            if (form.name === '') {
-              setErrorMessage('Name is required');
-              return;
-            }
-
-            if (form.latitude === '') {
-              setErrorMessage('Latitude is required');
-              return;
-            }
-
-            if (form.longitude === '') {
-              setErrorMessage('Longitude is required');
-              return;
-            }
-
-            if (!latRegex.test(form.latitude)) {
-              setErrorMessage('Latitude is not valid');
-              return;
-            }
-
-            if (!longRegex.test(form.longitude)) {
-              setErrorMessage('Longitude is not valid');
-              return;
-            }
-
-            onFinish(form);
-          }}
-        />
+        <Button color="black" title="Save" onPress={onSave} />
       </View>
     </View>
   );
 };
 
+const getParams = (params = []) => {
+  return params
+    .map(({key, value}) => {
+      const encodedKey = encodeURIComponent(key);
+      const encodedValue = encodeURIComponent(value);
+      return `${encodedKey}=${encodedValue}`;
+    })
+    .join('&');
+};
+
+const getSchemeAndUrl = async (
+  lat: string,
+  lon: string,
+  coords = {latitude: '41.0052041', longitude: '28.8473737'}, // İstanbul
+  params = [
+    {
+      key: 'travelmode',
+      value: 'driving', // may be "walking", "bicycling" or "transit" as well
+    },
+  ],
+): Promise<string> => {
+  params.push({
+    key: 'destination',
+    value: `${lat},${lon}`,
+  });
+  params.push({
+    key: 'origin',
+    value: `${coords.latitude},${coords.longitude}`,
+  });
+  const url = `https://www.google.com/maps/dir/?api=1&${getParams(params)}`;
+  return new Promise(resolve => {
+    resolve(url);
+  });
+};
+
 type DestinationRowProps = {
   destination: Destination;
-  onRemove: () => void;
+  onRemove: (id: string) => void;
 };
 
 const DestinationRow = ({destination, onRemove}: DestinationRowProps) => {
+  const onGo = async () => {
+    try {
+      const url = await getSchemeAndUrl(
+        destination.latitude,
+        destination.longitude,
+      );
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert(`Don't know how to open this URL: ${url}`);
+      }
+    } catch (error) {
+      console.log('error on onGo', error);
+      Alert.alert('Error on onGo');
+    }
+  };
+
   return (
     <View style={styles.row}>
       <Text>
         {destination.name} ({destination.latitude},{destination.longitude})
       </Text>
       <View style={styles.rowEnd}>
-        <Pressable style={styles.mr10} onPress={() => {}}>
+        <Pressable style={styles.mr10} onPress={onGo}>
           <Text style={styles.underline}>Go</Text>
         </Pressable>
-        <Pressable onPress={onRemove}>
+        <Pressable onPress={() => onRemove(destination.id)}>
           <Text style={styles.underline}>Remove</Text>
         </Pressable>
       </View>
@@ -210,10 +263,6 @@ const DestinationRow = ({destination, onRemove}: DestinationRowProps) => {
 };
 
 const styles = StyleSheet.create({
-  welcomeText: {
-    marginVertical: 20,
-    textAlign: 'center',
-  },
   f1: {
     flex: 1,
   },
@@ -222,6 +271,10 @@ const styles = StyleSheet.create({
   },
   mr10: {
     marginRight: 10,
+  },
+  welcomeText: {
+    marginVertical: 20,
+    textAlign: 'center',
   },
   title: {
     fontWeight: 'bold',
@@ -250,8 +303,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   row: {
-    borderWidth: 1,
-    borderColor: 'gray',
     padding: 10,
     marginVertical: 5,
     flexDirection: 'row',
